@@ -1,0 +1,25 @@
+# Attribution
+
+The compaction strategy implemented here is adapted from
+[fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction),
+which is MIT licensed, Copyright (c) 2025.
+
+Specifically derived from that project:
+
+- the graded two-question decision protocol (`keepCall` / `keepResult` as
+  `noul` probabilities) and the keep / truncate-result / drop-call actions
+- the staged state-fitting ladder and its constants (tool inputs truncated to
+  1000 / 200 / 60 characters, `TEXT_HEAD` 400, `TEXT_TAIL` 150)
+- the calibrated token estimator (a word per six letters, half a token per
+  digit, 0.9 per other symbol)
+- the pinning rule (first message plus the newest N)
+- the state context wording and the batching-under-a-token-budget approach
+
+This project is an independent reimplementation for
+[opencode](https://opencode.ai), not a fork. It targets opencode's part model,
+where a single `tool` part carries both the call and its result, so the
+original's orphaned-result invariant is unnecessary. It also runs before every
+model request rather than only at a compaction boundary, never throws (any
+failure leaves the messages untouched), and adds a daily request ceiling.
+
+All credit for the underlying idea and the decision protocol belongs upstream.

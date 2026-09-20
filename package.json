@@ -1,0 +1,58 @@
+{
+  "name": "opencode-jev-compaction",
+  "version": "0.1.0",
+  "description": "opencode plugins that replace lossy compaction with Jev decisions: score every tool call and result, drop or truncate the stale ones, keep everything else verbatim.",
+  "type": "module",
+  "license": "MIT",
+  "author": "JLegends",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JLegends/opencode-jev-compaction.git"
+  },
+  "homepage": "https://github.com/JLegends/opencode-jev-compaction#readme",
+  "bugs": {
+    "url": "https://github.com/JLegends/opencode-jev-compaction/issues"
+  },
+  "exports": {
+    "./server": {
+      "import": "./src/server.ts"
+    },
+    "./tui": {
+      "import": "./src/tui.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "compaction",
+    "context",
+    "tokens",
+    "jev",
+    "typesafe",
+    "cost"
+  ],
+  "engines": {
+    "opencode": ">=1.18.31"
+  },
+  "peerDependencies": {
+    "@opentui/solid": ">=0.4.5",
+    "solid-js": "^1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "check": "node --check src/tui.js && bun build src/server.ts --target node --outfile .check.js && rm -f .check.js"
+  }
+}
