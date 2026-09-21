@@ -1,6 +1,6 @@
 {
   "name": "opencode-jev-compaction",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "opencode plugins that replace lossy compaction with Jev decisions: score every tool call and result, drop or truncate the stale ones, keep everything else verbatim.",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,8 @@
     "src",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "scripts"
   ],
   "keywords": [
     "opencode",
@@ -53,6 +54,7 @@
     }
   },
   "scripts": {
-    "check": "node --check src/tui.js && bun build src/server.ts --target node --outfile .check.js && rm -f .check.js"
+    "check": "node --check src/tui.js && bun build src/server.ts --target node --outfile .check.js && rm -f .check.js",
+    "report": "node scripts/report.mjs"
   }
 }
