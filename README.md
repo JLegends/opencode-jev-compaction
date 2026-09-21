@@ -108,6 +108,27 @@ Each ledger line carries `tokensBefore`, `tokensAfter`, `tokensSaved`, `dropped`
 `truncated`, `requests`, `stage`, the re-run counts, and the `session`, so savings and
 mistakes can be attributed rather than averaged over everything.
 
+## Reporting
+
+```sh
+npm run report                 # markdown rollup
+npm run report -- --days 14    # limit the window
+npm run report -- --json       # raw aggregates
+npm run report -- --exclude ses_a,ses_b
+```
+
+Joins the ledger to opencode's own session records, because neither half answers
+anything alone: savings without outcomes, or outcomes without knowing whether the
+plugin ran. It reports whether it is doing anything at all (engagement, dormant,
+cap, overflow), whether the decisions are good (re-run rate, with a verdict),
+pruned vs unpruned sessions as *cohorts not causation*, before vs after the install
+boundary, and the subagent cost share measured directly.
+
+It will not print a quality verdict when the installed version does not record
+re-runs, so a `0` cannot be misread as "nothing was undone".
+
+It needs the `opencode` CLI on `PATH`, and `sqlite3` (bundled with macOS).
+
 ## How it works
 
 1. Every finished `tool` part is a candidate, except those in the first message
