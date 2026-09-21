@@ -1,6 +1,6 @@
 {
   "name": "opencode-jev-compaction",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "opencode plugins that replace lossy compaction with Jev decisions: score every tool call and result, drop or truncate the stale ones, keep everything else verbatim.",
   "type": "module",
   "license": "MIT",
