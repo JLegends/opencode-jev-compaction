@@ -442,33 +442,85 @@ function truncatedOutput(call: Call): string {
   return `${head}[jev-compaction truncated ${call.output.length - TRUNCATE_HEAD} chars of this tool result${call.isError ? " (error)" : ""}; re-run the tool if needed]`
 }
 
-// --- stats ---------------------------------------------------------------------
+// --- telemetry -----------------------------------------------------------------
+//
+// Savings alone tell you nothing about whether the decisions are good. The number
+// that matters is how often the model re-runs a tool whose result we dropped or
+// truncated: that is the direct, measurable cost of a wrong call. Everything here
+// exists so that trade-off is visible instead of assumed.
 
-function writeStats(delta: {
-  savedChars: number
-  calls: number
-  dropped: number
-  truncated: number
-  requests: number
-  ms: number
-  stage: string
-}) {
+const LEDGER_FILE = join(STATE_DIR, "jev-compaction-ledger.jsonl")
+
+/** Process-local counters, flushed on a throttle so hot paths stay cheap. */
+const counters = {
+  transformCalls: 0,
+  engaged: 0,
+  belowThreshold: 0,
+  capReached: 0,
+  overflow: 0,
+  noKey: 0,
+}
+let lastFlush = 0
+const FLUSH_MS = 60_000
+
+/** Per-session record of what we removed, so a later repeat can be attributed to us. */
+type SessionMemory = { dropped: Map<string, string>; truncated: Map<string, string> }
+const sessions = new Map<string, SessionMemory>()
+
+function memoryFor(sessionID: string): SessionMemory {
+  let entry = sessions.get(sessionID)
+  if (!entry) {
+    if (sessions.size > 200) sessions.clear()
+    entry = { dropped: new Map(), truncated: new Map() }
+    sessions.set(sessionID, entry)
+  }
+  return entry
+}
+
+/**
+ * Identifies "the same tool call" across steps regardless of its call id. A call
+ * that reappears with a new id after we removed it is a re-run the model paid for.
+ */
+function signature(call: Call): string {
+  let input = ""
+  try {
+    input = JSON.stringify(call.input)
+  } catch {
+    input = "[unserializable]"
+  }
+  return `${call.tool}\u0000${input}`
+}
+
+function updateStats(mutate: (stats: any) => void) {
   try {
     mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
-    let previous: any = {}
+    let stats: any = {}
     try {
-      previous = JSON.parse(readFileSync(STATS_FILE, "utf8"))
+      stats = JSON.parse(readFileSync(STATS_FILE, "utf8"))
     } catch {}
-    const next = {
-      updated: new Date().toISOString(),
-      runs: (Number(previous.runs) || 0) + 1,
-      tokensSaved: (Number(previous.tokensSaved) || 0) + Math.round(delta.savedChars / 4),
-      callsSeen: (Number(previous.callsSeen) || 0) + delta.calls,
-      dropped: (Number(previous.dropped) || 0) + delta.dropped,
-      truncated: (Number(previous.truncated) || 0) + delta.truncated,
-      last: delta,
-    }
-    writeFileSync(STATS_FILE, JSON.stringify(next, null, 2), { mode: 0o600 })
+    mutate(stats)
+    stats.updated = new Date().toISOString()
+    writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), { mode: 0o600 })
+  } catch {}
+}
+
+/** Fold the in-memory counters into the stats file, at most once a minute. */
+function flushCounters(force = false) {
+  const now = Date.now()
+  if (!force && now - lastFlush < FLUSH_MS) return
+  if (counters.transformCalls === 0 && counters.engaged === 0) return
+  lastFlush = now
+  const snapshot = { ...counters }
+  for (const key of Object.keys(counters) as Array<keyof typeof counters>) counters[key] = 0
+  updateStats((stats) => {
+    for (const [key, value] of Object.entries(snapshot)) stats[key] = (Number(stats[key]) || 0) + value
+  })
+}
+
+function appendLedger(entry: Record<string, unknown>) {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
+    appendFileSync(LEDGER_FILE, JSON.stringify(entry) + "\n", { mode: 0o600 })
   } catch {}
 }
 
@@ -477,30 +529,61 @@ function writeStats(delta: {
 async function prune(messages: Message[], reason: string): Promise<void> {
   if (!ENABLED) return
   try {
+    counters.transformCalls += 1
     if (!Array.isArray(messages) || messages.length === 0) return
 
     const calls = collectCalls(messages)
-    if (calls.length === 0) return
+    if (calls.length === 0) {
+      flushCounters()
+      return
+    }
 
     const estimated = estimateTokens(JSON.stringify(messages))
     if (estimated < THRESHOLD_TOKENS) {
+      counters.belowThreshold += 1
       trace("below threshold", { estimated, threshold: THRESHOLD_TOKENS })
+      flushCounters()
       return
     }
 
     const allowed = Math.max(0, DAILY_REQUEST_CAP - dayUsage().requests)
     if (allowed === 0) {
+      counters.capReached += 1
       trace("daily cap reached, skipping", { used: dayUsage().requests, cap: DAILY_REQUEST_CAP })
+      flushCounters()
       return
     }
     if (!apiKey()) {
+      counters.noKey += 1
       trace("no key, skipping")
+      flushCounters()
       return
     }
 
     const started = Date.now()
+    const sessionID = String(messages[0]?.info?.sessionID ?? "unknown")
+    const memory = memoryFor(sessionID)
     const candidates = calls.filter((call) => !call.pinned && !decided.has(call.callID))
-    const totalBefore = messages.reduce((sum, message) => sum + JSON.stringify(message).length, 0)
+    const tokensBefore = messages.reduce((sum, message) => sum + estimateTokens(JSON.stringify(message)), 0)
+
+    // A call that turns up again under a fresh id, after we removed or shortened the
+    // original, is one the model had to pay for twice. Counted before this run's own
+    // decisions so a re-run is never attributed to the decision that caused it.
+    let rerunAfterDrop = 0
+    let rerunAfterTruncate = 0
+    for (const call of calls) {
+      const sig = signature(call)
+      const droppedId = memory.dropped.get(sig)
+      if (droppedId && droppedId !== call.callID) {
+        rerunAfterDrop += 1
+        memory.dropped.delete(sig)
+      }
+      const truncatedId = memory.truncated.get(sig)
+      if (truncatedId && truncatedId !== call.callID) {
+        rerunAfterTruncate += 1
+        memory.truncated.delete(sig)
+      }
+    }
 
     let requests = 0
     let stage = "cache"
@@ -508,7 +591,11 @@ async function prune(messages: Message[], reason: string): Promise<void> {
       const fitted = fitState(messages, calls)
       stage = fitted.stage
       if (fitted.stage === "overflow") {
+        counters.overflow += 1
         trace("state overflow, skipping", { tokens: fitted.tokens })
+    // Force the flush when something was pruned: the throttle exists to keep the
+    // hot below-threshold path cheap, and a real prune is not on that path.
+    flushCounters(counters.engaged > 0)
         return
       }
       // Reserve against the cap before firing: every request is already in flight by
@@ -560,6 +647,7 @@ async function prune(messages: Message[], reason: string): Promise<void> {
       if (!action || action === "keep" || call.pinned) continue
       if (action === "drop_call") {
         drop.add(call.part)
+        memory.dropped.set(signature(call), call.callID)
         dropped += 1
         continue
       }
@@ -567,6 +655,7 @@ async function prune(messages: Message[], reason: string): Promise<void> {
       if (next === call.output) continue
       if (call.part.state?.status === "completed") call.part.state.output = next
       else if (call.part.state?.status === "error") call.part.state.error = next
+      memory.truncated.set(signature(call), call.callID)
       truncated += 1
     }
 
@@ -581,17 +670,66 @@ async function prune(messages: Message[], reason: string): Promise<void> {
     messages.length = 0
     messages.push(...kept)
 
-    const totalAfter = messages.reduce((sum, message) => sum + JSON.stringify(message).length, 0)
-    writeStats({
-      savedChars: Math.max(0, totalBefore - totalAfter),
-      calls: calls.length,
+    const tokensAfter = messages.reduce((sum, message) => sum + estimateTokens(JSON.stringify(message)), 0)
+    const tokensSaved = Math.max(0, tokensBefore - tokensAfter)
+    const ms = Date.now() - started
+
+    counters.engaged += 1
+    updateStats((stats) => {
+      stats.runs = (Number(stats.runs) || 0) + 1
+      stats.tokensSaved = (Number(stats.tokensSaved) || 0) + tokensSaved
+      stats.callsSeen = (Number(stats.callsSeen) || 0) + calls.length
+      stats.dropped = (Number(stats.dropped) || 0) + dropped
+      stats.truncated = (Number(stats.truncated) || 0) + truncated
+      stats.rerunAfterDrop = (Number(stats.rerunAfterDrop) || 0) + rerunAfterDrop
+      stats.rerunAfterTruncate = (Number(stats.rerunAfterTruncate) || 0) + rerunAfterTruncate
+      stats.last = {
+        tokensBefore,
+        tokensAfter,
+        tokensSaved,
+        calls: calls.length,
+        dropped,
+        truncated,
+        requests,
+        ms,
+        stage,
+        rerunAfterDrop,
+        rerunAfterTruncate,
+      }
+    })
+    flushCounters()
+
+    // One line per run that actually changed something, so the history can be
+    // analysed later without having had debug logging on at the time.
+    if (dropped > 0 || truncated > 0 || rerunAfterDrop > 0 || rerunAfterTruncate > 0) {
+      appendLedger({
+        at: new Date().toISOString(),
+        session: sessionID,
+        reason,
+        stage,
+        tokensBefore,
+        tokensAfter,
+        tokensSaved,
+        calls: calls.length,
+        dropped,
+        truncated,
+        requests,
+        rerunAfterDrop,
+        rerunAfterTruncate,
+        ms,
+      })
+    }
+    trace("pruned", {
+      reason,
+      session: sessionID,
+      stage,
+      requests,
       dropped,
       truncated,
-      requests,
-      ms: Date.now() - started,
-      stage,
+      tokensSaved,
+      rerunAfterDrop,
+      rerunAfterTruncate,
     })
-    trace("pruned", { reason, estimated, stage, requests, dropped, truncated, savedChars: totalBefore - totalAfter })
   } catch (error) {
     trace("prune failed", { error: String((error as Error)?.message ?? error) })
   }

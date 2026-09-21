@@ -76,6 +76,38 @@ which is the point.
 
 Set `JEV_DAILY_REQUEST_CAP` lower if you want a tighter bound.
 
+## Metrics
+
+Savings alone do not tell you whether the decisions are good, so the plugin records
+the cost of being wrong too. All of it lives in `~/.local/share/opencode/`:
+
+| File | What it is |
+| --- | --- |
+| `jev-compaction.json` | Running totals. `tokensSaved` uses the same calibrated estimator as the threshold, not a characters-per-token guess. |
+| `jev-compaction-ledger.jsonl` | One line per run that changed something, for analysis over time. |
+| `jev-compaction-usage.json` | Requests made today, against the daily ceiling. |
+| `jev-compaction.log` | Per-decision trace, only when `JEV_DEBUG=1`. |
+
+The totals include:
+
+- `runs`, `tokensSaved`, `callsSeen`, `dropped`, `truncated`
+- **`rerunAfterDrop`** and **`rerunAfterTruncate`** — the metrics that matter. A
+  re-run is detected when the model issues the same tool call, with the same input,
+  under a new id, after we removed or shortened the original. That is a decision the
+  model had to pay to undo.
+- `transformCalls`, `engaged`, `belowThreshold`, `capReached`, `overflow`, `noKey` —
+  so you can tell "working well" apart from "never ran".
+
+How to read it: if `rerunAfterDrop` climbs alongside `dropped`, the keep threshold is
+too high or the questions are being asked about content Jev cannot see. If `dropped`
+stays near zero and `belowThreshold` dominates, the trigger is higher than your
+sessions ever reach and the plugin is dormant — raise nothing, lower
+`JEV_COMPACTION_THRESHOLD` if you want it to actually act.
+
+Each ledger line carries `tokensBefore`, `tokensAfter`, `tokensSaved`, `dropped`,
+`truncated`, `requests`, `stage`, the re-run counts, and the `session`, so savings and
+mistakes can be attributed rather than averaged over everything.
+
 ## How it works
 
 1. Every finished `tool` part is a candidate, except those in the first message
