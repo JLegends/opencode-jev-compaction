@@ -55,11 +55,12 @@ export JEV_KEYCHAIN_ACCOUNT=...        # keychain account name
 | `JEV_KEYCHAIN_SERVICE` / `JEV_KEYCHAIN_ACCOUNT` | — | Read the key from the macOS Keychain instead of the environment. |
 | `JEV_COMPACTION` | on | `0` disables everything. |
 | `JEV_COMPACTION_THRESHOLD` | `60000` | Estimated tokens before it engages. Below this it does nothing and costs nothing. |
-| `JEV_KEEP_THRESHOLD` | `0.5` | Minimum probability for a call or result to be kept. |
+| `JEV_KEEP_THRESHOLD` | `0.35` | Minimum probability for a call or result to be kept. Lower keeps more; a call below it is deleted outright, which is irreversible, so this is deliberately conservative. |
 | `JEV_PRESERVE_RECENT` | `6` | Newest messages never touched. Values below `1` are clamped to `1`; setting it to `0` drops the results the model is actively using and causes re-run loops. |
 | `JEV_MAX_STATE_TOKENS` | `25000` | Ceiling for the state sent to Jev. |
 | `JEV_MAX_REQUEST_TOKENS` | `30000` | Ceiling for state plus one batch of questions. |
 | `JEV_TRUNCATE_HEAD` | `300` | Characters of a dropped result kept before its note. |
+| `JEV_SMALL_RESULT_CHARS` | `600` | Results at or below this size are shown to Jev in full instead of as a note. |
 | `JEV_TIMEOUT_MS` | `20000` | Per-request timeout. Failures are skipped silently. |
 | `JEV_DAILY_REQUEST_CAP` | `200` | Hard ceiling on Jev requests per day. |
 | `JEV_MODEL` | `jev-latest` | Model name. |

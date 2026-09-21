@@ -18,11 +18,12 @@
 //   JEV_KEYCHAIN_ACCOUNT          macOS keychain account to read the key from
 //   JEV_COMPACTION=0              disable entirely
 //   JEV_COMPACTION_THRESHOLD      estimated tokens before it engages (default 60000)
-//   JEV_KEEP_THRESHOLD            minimum keep probability (default 0.5)
+//   JEV_KEEP_THRESHOLD            minimum keep probability (default 0.35)
 //   JEV_PRESERVE_RECENT           newest messages never touched (default 6, minimum 1)
 //   JEV_MAX_STATE_TOKENS          ceiling for the state sent to Jev (default 25000)
 //   JEV_MAX_REQUEST_TOKENS        ceiling for state plus questions (default 30000)
 //   JEV_TRUNCATE_HEAD             chars of a dropped result retained (default 300)
+//   JEV_SMALL_RESULT_CHARS        results this size or smaller are shown to Jev in full (default 600)
 //   JEV_TIMEOUT_MS                per-request timeout (default 20000)
 //   JEV_DAILY_REQUEST_CAP         hard ceiling on Jev requests per day (default 200)
 //   JEV_MODEL                     model name (default "jev-latest")
@@ -47,9 +48,10 @@ const ENABLED = process.env.JEV_COMPACTION !== "0"
 const THRESHOLD_TOKENS = num(process.env.JEV_COMPACTION_THRESHOLD, 60_000, 1)
 const MAX_STATE_TOKENS = num(process.env.JEV_MAX_STATE_TOKENS, 25_000, 1)
 const MAX_REQUEST_TOKENS = num(process.env.JEV_MAX_REQUEST_TOKENS, 30_000, 1)
-const KEEP_THRESHOLD = num(process.env.JEV_KEEP_THRESHOLD, 0.5)
+const KEEP_THRESHOLD = num(process.env.JEV_KEEP_THRESHOLD, 0.35)
 const PRESERVE_RECENT = Math.max(1, Math.floor(num(process.env.JEV_PRESERVE_RECENT, 6, 1)))
 const TRUNCATE_HEAD = Math.floor(num(process.env.JEV_TRUNCATE_HEAD, 300))
+const SMALL_RESULT_CHARS = Math.floor(num(process.env.JEV_SMALL_RESULT_CHARS, 600))
 const TIMEOUT_MS = num(process.env.JEV_TIMEOUT_MS, 20_000, 1)
 const DAILY_REQUEST_CAP = Math.floor(num(process.env.JEV_DAILY_REQUEST_CAP, 200))
 
@@ -280,6 +282,11 @@ function inputText(input: Record<string, unknown>, limit: number): string {
 }
 
 function resultNote(call: Call): string {
+  // Small results are sent in full. Replacing every result with a note hides the
+  // evidence Jev needs: it cannot tell a throwaway file listing from a short file
+  // of hard constraints, so it reasonably guesses "cheap to re-read" and drops
+  // both. Showing what a small result actually says is what lets it tell them apart.
+  if (call.output.length <= SMALL_RESULT_CHARS) return call.output
   return `${call.isError ? "error" : "ok"}, ${call.output.length} chars (omitted)`
 }
 
@@ -529,7 +536,17 @@ async function prune(messages: Message[], reason: string): Promise<void> {
       )
       if (decided.size > 5000) decided.clear()
       for (const group of answered) {
-        for (const item of group) decided.set(item.call.callID, decide(item.call, item.keepCall, item.keepResult))
+        for (const item of group) {
+          const action = decide(item.call, item.keepCall, item.keepResult)
+          trace("decision", {
+            id: item.call.id,
+            tool: item.call.tool,
+            keepCall: item.keepCall,
+            keepResult: item.keepResult,
+            action,
+          })
+          decided.set(item.call.callID, action)
+        }
       }
     }
 
