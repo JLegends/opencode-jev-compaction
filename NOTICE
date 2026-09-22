@@ -1,25 +1,32 @@
 # Attribution
 
-The compaction strategy implemented here is adapted from
-[fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction),
-which is MIT licensed, Copyright (c) 2025.
+The original strategy in this project (v0.1) was adapted from
+[fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction), which is MIT
+licensed, Copyright (c) 2025. Specifically derived from it:
 
-Specifically derived from that project:
-
-- the graded two-question decision protocol (`keepCall` / `keepResult` as
-  `noul` probabilities) and the keep / truncate-result / drop-call actions
-- the staged state-fitting ladder and its constants (tool inputs truncated to
-  1000 / 200 / 60 characters, `TEXT_HEAD` 400, `TEXT_TAIL` 150)
-- the calibrated token estimator (a word per six letters, half a token per
-  digit, 0.9 per other symbol)
+- the idea of replacing a lossy compaction summary with per-tool-call keep / truncate /
+  drop decisions, so everything kept stays verbatim
+- the calibrated token estimator (a word per six letters, half a token per digit, 0.9 per
+  other symbol)
 - the pinning rule (first message plus the newest N)
-- the state context wording and the batching-under-a-token-budget approach
+- the Jev `system_one` request/response shape (`answers[name].noul`)
+- the batching-under-a-token-budget approach, in the early versions
 
-This project is an independent reimplementation for
-[opencode](https://opencode.ai), not a fork. It targets opencode's part model,
-where a single `tool` part carries both the call and its result, so the
-original's orphaned-result invariant is unnecessary. It also runs before every
-model request rather than only at a compaction boundary, never throws (any
-failure leaves the messages untouched), and adds a daily request ceiling.
+## Divergence in v0.3
 
-All credit for the underlying idea and the decision protocol belongs upstream.
+v0.3 keeps the estimator, the pinning rule and the protocol, and replaces the decision core
+entirely:
+
+- decisions are made from facts computed exactly (supersession, exact-string reference,
+  error resolution) rather than from model judgements
+- the model is an optional local refinement (Laya, via MLX), used only for the residual
+  question, and it can only ever justify a truncation
+- deletion requires deterministic evidence; nothing is deleted on a probabilistic answer
+- the payload per question is a few hundred tokens rather than a 25k-token wholesale state
+
+The finding that drove this is recorded in the README: with a `noul` primitive, factual
+questions are reliable and judgement questions are not.
+
+For the open-source model this now defaults to: Laya by Convai Innovations
+(https://huggingface.co/convaiinnovations/laya), run through the MLX runtime
+(https://github.com/mizorewww/laya-mlx). Both are third-party projects, unmodified.

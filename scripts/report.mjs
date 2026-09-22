@@ -20,9 +20,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 const STATE = join(homedir(), ".local", "share", "opencode")
-const STATS_FILE = join(STATE, "jev-compaction.json")
-const LEDGER_FILE = join(STATE, "jev-compaction-ledger.jsonl")
-const USAGE_FILE = join(STATE, "jev-compaction-usage.json")
+const STATS_FILE = join(STATE, "laya-compaction.json")
+const LEDGER_FILE = join(STATE, "laya-compaction-ledger.jsonl")
+const USAGE_FILE = join(STATE, "laya-compaction-usage.json")
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`)
@@ -198,9 +198,14 @@ const aggregate = {
     belowThreshold: cumulative.belowThreshold ?? 0,
     capReached: cumulative.capReached ?? 0,
     overflow: cumulative.overflow ?? 0,
-    noKey: cumulative.noKey ?? 0,
+    noBackend: cumulative.noBackend ?? 0,
     requestsToday: today.requests ?? 0,
   },
+  reasons: Object.fromEntries(
+    Object.entries(cumulative)
+      .filter(([key]) => key.startsWith("reason_"))
+      .map(([key, value]) => [key.replace("reason_", ""), Number(value) || 0]),
+  ),
   cohorts: { pruned: cohort(prunedRows), unpruned: cohort(unprunedRows) },
   beforeAfter: { before: cohort(before), after: cohort(after) },
   subagents: { rootsWithChildren: withChildren.length, rootCost, childrenCost },
@@ -216,7 +221,7 @@ if (AS_JSON) {
 const lines = []
 const push = (line = "") => lines.push(line)
 
-push(`# jev-compaction report`)
+push(`# laya-compaction report`)
 push()
 push(`Window: ${aggregate.window.from} to ${aggregate.window.to} · ${aggregate.window.sessions} root sessions${EXCLUDE.size ? ` · ${EXCLUDE.size} excluded` : ""}`)
 push()
@@ -231,7 +236,7 @@ push(`| dormant (below threshold) | ${num(aggregate.plugin.belowThreshold)} |`)
 push(`| engaged | ${num(aggregate.plugin.engaged)} |`)
 push(`| state overflow (skipped) | ${num(aggregate.plugin.overflow)} |`)
 push(`| daily cap hit | ${num(aggregate.plugin.capReached)} |`)
-push(`| no key configured | ${num(aggregate.plugin.noKey)} |`)
+push(`| backend unreachable | ${num(aggregate.plugin.noBackend)} |`)
 push(`| requests today | ${aggregate.plugin.requestsToday} |`)
 push()
 if (!aggregate.plugin.metricsAvailable) {
@@ -265,6 +270,17 @@ if (!aggregate.plugin.metricsAvailable) {
     : rate > 0.1
       ? `Some drops come back. Worth watching, not yet alarming.`
       : `Few drops come back. The judgement is holding up so far.`)
+  push()
+}
+
+if (Object.keys(aggregate.reasons).length > 0) {
+  push(`## Why decisions were made`)
+  push()
+  for (const [reason, count] of Object.entries(aggregate.reasons).sort((a, b) => b[1] - a[1])) {
+    push(`- \`${reason}\`: ${num(count)}`)
+  }
+  push()
+  push(`\`superseded\` and \`error-resolved\` are computed exactly; \`referenced\` and \`small-result\` are exact too. Only \`model-*\` involved the model, and a model answer can only ever cause a truncation.`)
   push()
 }
 

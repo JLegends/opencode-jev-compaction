@@ -1,7 +1,7 @@
 {
   "name": "opencode-jev-compaction",
-  "version": "0.2.2",
-  "description": "opencode plugins that replace lossy compaction with Jev decisions: score every tool call and result, drop or truncate the stale ones, keep everything else verbatim.",
+  "version": "0.3.0",
+  "description": "opencode plugins that shrink context by deleting provably-stale tool calls and truncating the rest, deterministically first, with an optional local Laya backend.",
   "type": "module",
   "license": "MIT",
   "author": "JLegends",
